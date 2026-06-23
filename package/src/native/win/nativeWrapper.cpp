@@ -6992,9 +6992,39 @@ BOOL WINAPI ConsoleControlHandler(DWORD dwCtrlType) {
     }
 }
 
+// Declares the process as per-monitor-v2 DPI aware, before any window or WebView2
+// environment is created. Without this, Windows treats the process as DPI-unaware
+// and bitmap-stretches the entire rendered window to match the display's scale
+// factor instead of letting WebView2 render natively at that scale - the symptom
+// reported as blurry/low-quality UI on HiDPI (e.g. 4K) displays. Loaded dynamically
+// (rather than linked directly) since SetProcessDpiAwarenessContext is only
+// available on Windows 10 1607+ and we want older systems to no-op here instead
+// of failing to load the DLL.
+static void EnablePerMonitorDpiAwareness() {
+    typedef HANDLE DPI_AWARENESS_CONTEXT_T;
+    typedef BOOL(WINAPI *SetProcessDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT_T);
+    constexpr DPI_AWARENESS_CONTEXT_T kPerMonitorAwareV2 = (DPI_AWARENESS_CONTEXT_T)-4;
+
+    HMODULE user32 = LoadLibraryW(L"user32.dll");
+    if (!user32) return;
+
+    auto setDpiAwarenessContext = (SetProcessDpiAwarenessContextFunc)GetProcAddress(
+        user32, "SetProcessDpiAwarenessContext");
+    if (setDpiAwarenessContext) {
+        if (!setDpiAwarenessContext(kPerMonitorAwareV2)) {
+            ::log("WARNING: SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) failed - Win32 error: " + std::to_string(GetLastError()));
+        }
+    }
+    FreeLibrary(user32);
+}
+
 extern "C" {
 
 ELECTROBUN_EXPORT void startEventLoop(const char* identifier, const char* name, const char* channel) {
+    // Must happen before any window or WebView2 environment is created - see
+    // EnablePerMonitorDpiAwareness() above.
+    EnablePerMonitorDpiAwareness();
+
     g_mainThreadId = GetCurrentThreadId();
 
     // Store identifier, name, and channel globally for use in CEF initialization
