@@ -22,16 +22,13 @@ echo "[electrobun fork] Building from source..."
 
 (cd package && bun install && bun build.ts)
 
-TMP="${ROOT}-built-tmp"
-rm -rf "$TMP"
-mv package "$TMP"
-cd "$(dirname "$ROOT")"
-rm -rf "$ROOT"
-mv "$TMP" "$ROOT"
-
-if [ -f "$ROOT/bin/electrobun.cjs" ]; then
-	mkdir -p "$ROOT/../.bin"
-	ln -sf "../electrobun/bin/electrobun.cjs" "$ROOT/../.bin/electrobun"
-fi
+# Merge package/'s built contents up into this directory (overwriting the
+# thin package.json with the real one) rather than wiping this directory
+# and swapping package/ into its place - this script is itself a file
+# inside this directory, still open while it's running, and Windows
+# (unlike macOS/Linux) refuses to remove a directory with an open file
+# handle inside it ("Device or resource busy").
+cp -a package/. .
+rm -rf package
 
 echo "[electrobun fork] Done."
