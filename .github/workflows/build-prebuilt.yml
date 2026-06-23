@@ -3,11 +3,22 @@ name: Build Prebuilt Artifacts
 # Publishes prebuilt native binaries (CLI + core) as a GitHub Release on this
 # fork, so consumers can depend on a lightweight, pre-built package (like the
 # real npm-published electrobun) instead of building from source on every
-# install. Manually triggered - this fork changes rarely, so there's no need
-# to rebuild automatically on every push.
+# install.
+#
+# workflow_dispatch would be cleaner (this fork changes rarely, no need to
+# rebuild on every push) but GitHub only lets you dispatch a workflow that
+# already exists on the repo's default branch - this fork's default branch
+# is main, untouched upstream code, and this workflow only lives on this
+# fix branch. Trigger on push here instead; switch to workflow_dispatch
+# once this file is merged to main.
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - fix/windows-per-monitor-dpi-awareness
+    paths:
+      - .github/workflows/build-prebuilt.yml
+      - "package/**"
 
 jobs:
   build:
