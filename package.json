@@ -4,6 +4,6 @@
 	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript.",
 	"license": "MIT",
 	"scripts": {
-		"postinstall": "bun postinstall.ts"
+		"postinstall": "bash postinstall.sh"
 	}
 }
