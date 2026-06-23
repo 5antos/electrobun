@@ -20,6 +20,9 @@ on:
       - .github/workflows/build-prebuilt.yml
       - "package/**"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
