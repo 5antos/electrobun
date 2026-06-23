@@ -335,7 +335,7 @@ async function ensureCoreDependencies(
 	const platformName =
 		platformOS === "macos" ? "darwin" : platformOS === "win" ? "win" : "linux";
 	const archName = platformArch;
-	const coreTarballUrl = `https://github.com/blackboardsh/electrobun/releases/download/${version}/electrobun-core-${platformName}-${archName}.tar.gz`;
+	const coreTarballUrl = `https://github.com/5antos/electrobun/releases/download/${version}/electrobun-core-${platformName}-${archName}.tar.gz`;
 
 	console.log(`Downloading core binaries from: ${coreTarballUrl}`);
 
@@ -982,7 +982,7 @@ async function ensureCEFDependencies(
 	const platformName =
 		platformOS === "macos" ? "darwin" : platformOS === "win" ? "win" : "linux";
 	const archName = platformArch;
-	const cefTarballUrl = `https://github.com/blackboardsh/electrobun/releases/download/${version}/electrobun-cef-${platformName}-${archName}.tar.gz`;
+	const cefTarballUrl = `https://github.com/5antos/electrobun/releases/download/${version}/electrobun-cef-${platformName}-${archName}.tar.gz`;
 
 	// Helper function to download with retry logic
 	async function downloadWithRetry(
