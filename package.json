@@ -1,0 +1,17 @@
+{
+	"name": "electrobun",
+	"version": "1.18.4-beta.6",
+	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript.",
+	"license": "MIT",
+	"exports": {
+		".": "./package/dist/api/bun/index.ts",
+		"./bun": "./package/dist/api/bun/index.ts",
+		"./view": "./package/dist/api/browser/index.ts"
+	},
+	"bin": {
+		"electrobun": "./package/bin/electrobun.cjs"
+	},
+	"scripts": {
+		"postinstall": "cd package && bun install && bun build.ts"
+	}
+}
