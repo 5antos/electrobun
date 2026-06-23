@@ -7003,7 +7003,7 @@ BOOL WINAPI ConsoleControlHandler(DWORD dwCtrlType) {
 static void EnablePerMonitorDpiAwareness() {
     typedef HANDLE DPI_AWARENESS_CONTEXT_T;
     typedef BOOL(WINAPI *SetProcessDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT_T);
-    constexpr DPI_AWARENESS_CONTEXT_T kPerMonitorAwareV2 = (DPI_AWARENESS_CONTEXT_T)-4;
+    const DPI_AWARENESS_CONTEXT_T kPerMonitorAwareV2 = (DPI_AWARENESS_CONTEXT_T)-4;
 
     HMODULE user32 = LoadLibraryW(L"user32.dll");
     if (!user32) return;
