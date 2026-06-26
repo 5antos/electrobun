@@ -3338,15 +3338,23 @@ public:
     
     void evaluateJavaScriptWithNoCompletion(const char* jsString) override {
         if (webview) {
-            // Copy string to avoid lifetime issues in lambda
+            // Copy string to avoid lifetime issues in lambda.
+            // Use dispatch_async (fire-and-forget) to avoid blocking the calling
+            // thread: dispatch_sync would deadlock on Windows because the Bun
+            // Worker thread (the caller) and the UI thread can end up in a
+            // mutual wait — the Worker blocks on future.get() while the UI
+            // thread's ExecuteScript COM call can block waiting for the renderer,
+            // which in turn is waiting for the Worker.  Since
+            // evaluateJavaScriptWithNoCompletion is explicitly fire-and-forget
+            // (no completion handler), async dispatch is always correct here.
             std::string jsStringCopy = jsString;
-            MainThreadDispatcher::dispatch_sync([this, jsStringCopy]() {
+            MainThreadDispatcher::dispatch_async([this, jsStringCopy]() {
                 std::wstring js = std::wstring(jsStringCopy.begin(), jsStringCopy.end());
                 webview->ExecuteScript(js.c_str(), nullptr);
             });
         }
     }
-    
+
     void callAsyncJavascript(const char* messageId, const char* jsString, uint32_t webviewId, uint32_t hostWebviewId, void* completionHandler) override {
         if (webview) {
             std::wstring js = std::wstring(jsString, jsString + strlen(jsString));
