@@ -6726,6 +6726,14 @@ static std::shared_ptr<WebView2View> createWebView2View(uint32_t webviewId,
                 // Create directory if it doesn't exist
                 // Use SHCreateDirectoryExW for recursive creation
                 SHCreateDirectoryExW(NULL, userDataFolder.c_str(), NULL);
+
+                // Point the permission cache at a file inside the default WebView2
+                // user-data folder so granted permissions survive app restarts.
+                // Only do this for the default (unpartitioned) profile — partitioned
+                // and ephemeral views don't need to share the same permission store.
+                if (partitionStr.empty()) {
+                    PermissionCache::getInstance().setStoragePath(userDataPath + "\\permissions.dat");
+                }
             }
 
             // Use partition-specific user data folder (nullptr if empty for default behavior)
