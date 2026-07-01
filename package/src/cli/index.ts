@@ -1725,6 +1725,9 @@ const ENTITLEMENT_TO_PLIST_KEY: Record<string, string> = {
 	"com.apple.security.device.camera": "NSCameraUsageDescription",
 	"com.apple.security.device.microphone": "NSMicrophoneUsageDescription",
 	"com.apple.security.device.audio-input": "NSMicrophoneUsageDescription",
+	// macOS 14 (Sonoma)+ requires NSScreenCaptureUsageDescription in Info.plist
+	// alongside the entitlement for the TCC permission prompt to appear.
+	"com.apple.security.device.screen-capture": "NSScreenCaptureUsageDescription",
 	"com.apple.security.personal-information.location":
 		"NSLocationUsageDescription",
 	"com.apple.security.personal-information.location-when-in-use":
