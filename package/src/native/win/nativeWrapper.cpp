@@ -6414,6 +6414,25 @@ static std::shared_ptr<WebView2View> createWebView2View(uint32_t webviewId,
                                             }
                                             
                                             std::string origin = getOriginFromUrl(uri);
+
+                                            // views:// is the app's own bundled-asset shell — always
+                                            // trusted, never prompt. Matches the macOS handler in
+                                            // nativeWrapper.mm and mirrors how native desktop apps
+                                            // (e.g. Discord) treat their own first-party UI: the app
+                                            // requesting the mic for its own feature is expected,
+                                            // consented-to behaviour, gated by the OS-level microphone
+                                            // privacy control rather than a per-session in-app dialog.
+                                            // Non-first-party origins still fall through to the
+                                            // cache/prompt flow below.
+                                            if (origin.find("views://") == 0) {
+                                                args->put_State(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
+                                                printf("WebView2: auto-granting %s for trusted app shell %s\n",
+                                                    (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE ? "microphone" :
+                                                     kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA ? "camera" : "permission"),
+                                                    origin.c_str());
+                                                return S_OK;
+                                            }
+
                                             PermissionType permType = PermissionType::OTHER;
                                             std::string permissionName = "Permission";
                                             
