@@ -9407,21 +9407,25 @@ ELECTROBUN_EXPORT HWND createWindowWithFrameAndStyleFromWorker(
             wc.hInstance = GetModuleHandle(NULL);
             wc.lpszClassName = "BasicWindowClass";  // Use ANSI string
 
-            // Without an explicit hIcon/hIconSm, Windows leaves the window
-            // itself iconless — the taskbar/title bar/Task Manager don't
+            // Without an explicit hIcon, Windows leaves the window itself
+            // iconless — the taskbar/title bar/Task Manager don't
             // automatically inherit the exe's own PE icon resource for the
             // window, even though Explorer shows it correctly for the file.
             // Pull it explicitly from this process's own exe (index 0 is
             // the default/primary icon — the same one rcedit's --set-icon
             // writes at build time), so the running window matches the
-            // file's icon instead of showing a blank one.
+            // file's icon instead of showing a blank one. Plain WNDCLASSA
+            // (as opposed to WNDCLASSEXA) has no hIconSm slot — Windows
+            // derives an appropriately-scaled small icon from hIcon on its
+            // own, so the small handle we ask for just needs releasing
+            // rather than assigning anywhere, or it'd leak.
             char exePath[MAX_PATH];
             if (GetModuleFileNameA(NULL, exePath, MAX_PATH) > 0) {
                 HICON hIconLarge = NULL;
                 HICON hIconSmall = NULL;
                 ExtractIconExA(exePath, 0, &hIconLarge, &hIconSmall, 1);
                 if (hIconLarge) wc.hIcon = hIconLarge;
-                if (hIconSmall) wc.hIconSm = hIconSmall;
+                if (hIconSmall) DestroyIcon(hIconSmall);
             }
 
             RegisterClassA(&wc);  // Use ANSI version
