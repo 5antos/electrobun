@@ -43,6 +43,26 @@ import { getTemplate, getTemplateNames } from "./templates/embedded";
 // runtime. See https://bun.sh/docs/bundler/executables#embedding-files
 import rceditX64Path from "rcedit/bin/rcedit-x64.exe" with { type: "file" };
 import rceditFallbackPath from "rcedit/bin/rcedit.exe" with { type: "file" };
+
+// The path strings above only resolve through Bun's own patched fs APIs
+// (Bun.file, fs.readFileSync, existsSync, ...) — they're virtual paths into
+// the compiled executable's embedded assets, not real filesystem entries.
+// execFileSync -> uv_spawn calls straight into the OS's real process-creation
+// API, which has no idea what to do with them and fails with ENOENT. So this
+// reads the embedded bytes out and writes them to a genuine temp file once
+// per run — that real, on-disk path is what actually gets exec'd.
+let extractedRceditPath: string | null = null;
+async function resolveRceditExe(buildFolder: string): Promise<string> {
+	if (extractedRceditPath && existsSync(extractedRceditPath)) {
+		return extractedRceditPath;
+	}
+	const embeddedSource = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
+	const bytes = await Bun.file(embeddedSource).bytes();
+	const destPath = join(buildFolder, "rcedit-extracted.exe");
+	await Bun.write(destPath, bytes);
+	extractedRceditPath = destPath;
+	return destPath;
+}
 // import { loadBsdiff, loadBspatch } from 'bsdiff-wasm';
 // MacOS named pipes hang at around 4KB
 // @ts-expect-error - reserved for future use
@@ -2787,7 +2807,7 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 
 					// Use rcedit to embed the icon into launcher.exe
 					const { execFileSync } = await import("child_process");
-					const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
+					const rceditExe = await resolveRceditExe(buildFolder);
 					execFileSync(rceditExe, [bunCliLauncherDestination, "--set-icon", iconPath]);
 					console.log(`Successfully embedded icon into launcher.exe`);
 
@@ -2891,7 +2911,7 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 						}
 
 						const { execFileSync } = await import("child_process");
-						const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
+						const rceditExe = await resolveRceditExe(buildFolder);
 						execFileSync(rceditExe, [bunBinaryDestInBundlePath, "--set-icon", iconPath]);
 						console.log(`Successfully embedded icon into bun.exe`);
 
@@ -5157,8 +5177,8 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 					}
 
 					// Use rcedit to embed the icon
-										const { execFileSync } = await import("child_process");
-					const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
+					const { execFileSync } = await import("child_process");
+					const rceditExe = await resolveRceditExe(buildFolder);
 					execFileSync(rceditExe, [outputExePath, "--set-icon", iconPath]);
 					console.log(`Successfully embedded icon into ${setupFileName}`);
 
