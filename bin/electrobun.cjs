@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const { execSync, spawn } = require('child_process');
-const { existsSync, mkdirSync, unlinkSync, chmodSync, copyFileSync, createWriteStream } = require('fs');
+const { existsSync, mkdirSync, unlinkSync, chmodSync, copyFileSync, createWriteStream, readFileSync, writeFileSync } = require('fs');
 const { join, dirname } = require('path');
 const https = require('https');
 const ProxyAgent = require('proxy-agent').ProxyAgent;
@@ -44,8 +44,6 @@ function getTarCommand() {
 
 // Paths
 const electrobunDir = join(__dirname, '..');
-const cacheDir = join(electrobunDir, '.cache');
-const cliBinary = join(cacheDir, `electrobun${binExt}`);
 
 async function downloadFile(url, filePath) {
   return new Promise((resolve, reject) => {
@@ -76,17 +74,38 @@ async function downloadFile(url, filePath) {
 }
 
 async function ensureCliBinary() {
-  // Check if CLI binary exists in bin location (where npm expects it)
+  // Get the package version to download the matching release — also used
+  // below to decide whether an already-in-place binary is still current.
+  const packageJson = require(join(electrobunDir, 'package.json'));
+  const version = packageJson.version;
+
   const binLocation = join(electrobunDir, 'bin', 'electrobun' + binExt);
-  if (existsSync(binLocation)) {
-    return binLocation;
+  const versionMarker = join(electrobunDir, 'bin', '.electrobun-version');
+
+  // Only reuse a binary already sitting at binLocation if it was put there
+  // for this exact version. Without this check, a version bump (e.g. via
+  // `bun install` picking up a new pinned commit) would silently keep
+  // running whatever CLI happened to be cached from before, with nothing
+  // in the output to indicate it's stale — bumping the version alone
+  // doesn't invalidate it.
+  if (existsSync(binLocation) && existsSync(versionMarker)) {
+    const cachedVersion = readFileSync(versionMarker, 'utf8').trim();
+    if (cachedVersion === version) {
+      return binLocation;
+    }
   }
 
-  // Check if core dependencies already exist in cache
+  // Cache dir is version-keyed for the same reason — an old extracted
+  // binary from a previous version must never satisfy a lookup for the
+  // current one.
+  const cacheDir = join(electrobunDir, '.cache', version);
+  const cliBinary = join(cacheDir, `electrobun${binExt}`);
+
   if (existsSync(cliBinary)) {
-    // Copy to bin location if it exists in cache but not in bin
+    // Already extracted under this version's cache dir — just (re)place it.
     mkdirSync(dirname(binLocation), { recursive: true });
     copyFileSync(cliBinary, binLocation);
+    writeFileSync(versionMarker, version);
     if (platform !== 'win') {
       chmodSync(binLocation, '755');
     }
@@ -95,11 +114,7 @@ async function ensureCliBinary() {
 
   console.log('Downloading electrobun CLI for your platform...');
 
-  // Get the package version to download the matching release
-  const packageJson = require(join(electrobunDir, 'package.json'));
-  const version = packageJson.version;
   const tag = `v${version}`;
-
   const tarballUrl = `https://github.com/5antos/electrobun/releases/download/${tag}/electrobun-cli-${platform}-${arch}.tar.gz`;
   const tarballPath = join(cacheDir, `electrobun-${platform}-${arch}.tar.gz`);
 
@@ -126,6 +141,7 @@ async function ensureCliBinary() {
     // Copy CLI to bin location so npm scripts can find it
     mkdirSync(dirname(binLocation), { recursive: true });
     copyFileSync(cliBinary, binLocation);
+    writeFileSync(versionMarker, version);
 
     // Make the bin location executable too
     if (platform !== 'win') {
