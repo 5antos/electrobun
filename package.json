@@ -1,7 +1,7 @@
 {
 	"name": "electrobun",
-	"version": "1.18.4-beta.6-dpifix.3",
-	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript. (fork: Windows per-monitor DPI awareness fix, prebuilt binaries served from this fork's own GitHub releases)",
+	"version": "1.18.4-beta.6-winiconfix.1",
+	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript. (fork: assorted Windows/macOS fixes, prebuilt binaries served from this fork's own GitHub releases)",
 	"license": "MIT",
 	"exports": {
 		".": "./dist/api/bun/index.ts",

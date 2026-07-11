@@ -33,6 +33,16 @@ import {
 	getMacOSBundleDisplayName,
 } from "../shared/naming";
 import { getTemplate, getTemplateNames } from "./templates/embedded";
+// Embedded (not resolved via require.resolve) so these actually exist at
+// runtime in the compiled CLI binary — require.resolve("rcedit/package.json")
+// bakes in the build machine's absolute node_modules path (e.g.
+// D:\a\electrobun\electrobun\package\node_modules\...), which doesn't exist
+// on an end user's machine, silently breaking Windows icon embedding.
+// `with { type: "file" }` tells `bun build --compile` to embed the file's
+// bytes into the executable and resolve this to a real extracted path at
+// runtime. See https://bun.sh/docs/bundler/executables#embedding-files
+import rceditX64Path from "rcedit/bin/rcedit-x64.exe" with { type: "file" };
+import rceditFallbackPath from "rcedit/bin/rcedit.exe" with { type: "file" };
 // import { loadBsdiff, loadBspatch } from 'bsdiff-wasm';
 // MacOS named pipes hang at around 4KB
 // @ts-expect-error - reserved for future use
@@ -2776,11 +2786,8 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 					}
 
 					// Use rcedit to embed the icon into launcher.exe
-										const { execFileSync } = await import("child_process");
-					const rceditPkgPath = require.resolve("rcedit/package.json");
-					const rceditDir = dirname(rceditPkgPath);
-					const rceditX64 = join(rceditDir, "bin", "rcedit-x64.exe");
-					const rceditExe = existsSync(rceditX64) ? rceditX64 : join(rceditDir, "bin", "rcedit.exe");
+					const { execFileSync } = await import("child_process");
+					const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
 					execFileSync(rceditExe, [bunCliLauncherDestination, "--set-icon", iconPath]);
 					console.log(`Successfully embedded icon into launcher.exe`);
 
@@ -2884,10 +2891,7 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 						}
 
 						const { execFileSync } = await import("child_process");
-						const rceditPkgPath = require.resolve("rcedit/package.json");
-						const rceditDir = dirname(rceditPkgPath);
-						const rceditX64 = join(rceditDir, "bin", "rcedit-x64.exe");
-						const rceditExe = existsSync(rceditX64) ? rceditX64 : join(rceditDir, "bin", "rcedit.exe");
+						const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
 						execFileSync(rceditExe, [bunBinaryDestInBundlePath, "--set-icon", iconPath]);
 						console.log(`Successfully embedded icon into bun.exe`);
 
@@ -5154,10 +5158,7 @@ usageDescriptions : ""}${urlTypes ? "\n" + urlTypes : ""}${documentTypes ?
 
 					// Use rcedit to embed the icon
 										const { execFileSync } = await import("child_process");
-					const rceditPkgPath = require.resolve("rcedit/package.json");
-					const rceditDir = dirname(rceditPkgPath);
-					const rceditX64 = join(rceditDir, "bin", "rcedit-x64.exe");
-					const rceditExe = existsSync(rceditX64) ? rceditX64 : join(rceditDir, "bin", "rcedit.exe");
+					const rceditExe = existsSync(rceditX64Path) ? rceditX64Path : rceditFallbackPath;
 					execFileSync(rceditExe, [outputExePath, "--set-icon", iconPath]);
 					console.log(`Successfully embedded icon into ${setupFileName}`);
 
