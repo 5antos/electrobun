@@ -9502,16 +9502,19 @@ ELECTROBUN_EXPORT HWND createWindowWithFrameAndStyleFromWorker(
                 // native behavior with no state tracking. Frameless windows can
                 // fail DWM's auto-rounding heuristics, hence the explicit ask.
                 // Both attributes are harmless no-ops on Win10 (E_INVALIDARG).
-                DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
-                DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_ROUNDED_CORNER_PREFERENCE,
-                                      &corner, sizeof(corner));
+                // Numeric values instead of the dwmapi.h names: the Win11 enums
+                // are hidden behind NTDDI guards this build doesn't meet, but
+                // the values are ABI-stable.
+                DWORD cornerPreference = 2; // DWMWCP_ROUND
+                DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_ROUNDED_CORNER_PREFERENCE*/,
+                                      &cornerPreference, sizeof(cornerPreference));
                 // WM_NCCALCSIZE strips the caption *area*, but DWM still paints
                 // the caption background color into the frame — visible as a
                 // white strip above the client area, spanning the full window
                 // rect (wider than the visible client by the invisible resize
                 // borders). Tell DWM to paint no caption color at all.
-                COLORREF captionColor = DWMWA_COLOR_NONE;
-                DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR,
+                COLORREF captionColor = 0xFFFFFFFE; // DWMWA_COLOR_NONE
+                DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/,
                                       &captionColor, sizeof(captionColor));
             }
 
