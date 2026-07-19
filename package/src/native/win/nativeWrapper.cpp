@@ -4264,6 +4264,42 @@ static bool eraseWithConfiguredBackground(HWND hwnd, HDC hdc) {
     return true;
 }
 
+// ---- Top resize border for hiddenInset windows ----
+// The WM_NCCALCSIZE caption strip leaves the top resize border inside the
+// client area, which is fully covered by the container and the webview's own
+// child HWNDs — hit tests land on those and never reach the frame, so the top
+// edge (unlike the other three, which stay non-client) can't be grabbed for
+// resizing. The windows covering the strip return HTTRANSPARENT there so the
+// hit test falls through to the main window, whose WindowProc converts
+// HTCLIENT to HTTOP/HTTOPLEFT/HTTOPRIGHT.
+
+static int topResizeBorderHeight() {
+    // Per-monitor-v2 awareness virtualizes GetSystemMetrics to the calling
+    // thread's DPI context, so no ForDpi variant (NTDDI-gated) is needed.
+    return GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+}
+
+static bool inTopResizeStrip(HWND topLevel, LPARAM lParam) {
+    if (IsZoomed(topLevel)) return false; // maximized windows have no resize borders
+    RECT wr;
+    if (!GetWindowRect(topLevel, &wr)) return false;
+    int y = GET_Y_LPARAM(lParam);
+    return y >= wr.top && y < wr.top + topResizeBorderHeight();
+}
+
+static LRESULT CALLBACK topResizePassthroughProc(HWND hwnd, UINT msg, WPARAM wParam,
+                                                 LPARAM lParam, UINT_PTR /*id*/, DWORD_PTR refData) {
+    if (msg == WM_NCHITTEST && inTopResizeStrip((HWND)refData, lParam)) {
+        return HTTRANSPARENT;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+static BOOL CALLBACK subclassForTopResize(HWND child, LPARAM topLevel) {
+    SetWindowSubclass(child, topResizePassthroughProc, 0xE1B0, (DWORD_PTR)topLevel);
+    return TRUE;
+}
+
 // ContainerView class definition
 class ContainerView {
 private:
@@ -4343,6 +4379,17 @@ private:
             case WM_ERASEBKGND: {
                 if (eraseWithConfiguredBackground(m_hwnd, (HDC)wParam)) {
                     return 1;
+                }
+                break;
+            }
+
+            case WM_NCHITTEST: {
+                // Fall through to the frame in the top resize strip — see
+                // topResizePassthroughProc. (For default-chrome windows the
+                // strip lies in the real caption, which never hit-tests the
+                // container, so this needs no chrome-style gate.)
+                if (inTopResizeStrip(GetAncestor(m_hwnd, GA_ROOT), lParam)) {
+                    return HTTRANSPARENT;
                 }
                 break;
             }
@@ -5004,6 +5051,25 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         // Return HTCLIENT to indicate this is the client area and should receive mouse events
                         return HTCLIENT;
                     }
+                }
+
+                // The caption strip removal put the top resize border inside
+                // the client area — translate hits there back into resize
+                // handles (the child windows covering the strip return
+                // HTTRANSPARENT to let the hit test reach us, see
+                // topResizePassthroughProc).
+                if (data && data->chromeStyle == ChromeStyle::HiddenInset) {
+                    LRESULT hit = DefWindowProc(hwnd, msg, wParam, lParam);
+                    if (hit == HTCLIENT && inTopResizeStrip(hwnd, lParam)) {
+                        RECT wr;
+                        GetWindowRect(hwnd, &wr);
+                        int x = GET_X_LPARAM(lParam);
+                        int corner = topResizeBorderHeight();
+                        if (x < wr.left + corner) return HTTOPLEFT;
+                        if (x >= wr.right - corner) return HTTOPRIGHT;
+                        return HTTOP;
+                    }
+                    return hit;
                 }
             }
             break;
@@ -6232,6 +6298,19 @@ static std::shared_ptr<WebView2View> createWebView2View(uint32_t webviewId,
 
                             // Store container HWND for masking support
                             view->setContainerHwnd(container->GetHwnd());
+
+                            // Top-edge resize for frameless (hiddenInset)
+                            // windows: Chromium's child windows cover the top
+                            // resize strip, so subclass them to pass hit tests
+                            // there through to the frame — see
+                            // topResizePassthroughProc.
+                            {
+                                HWND rootWindow = GetAncestor(container->GetHwnd(), GA_ROOT);
+                                WindowData* rootData = (WindowData*)GetWindowLongPtr(rootWindow, GWLP_USERDATA);
+                                if (rootData && rootData->chromeStyle == ChromeStyle::HiddenInset) {
+                                    EnumChildWindows(container->GetHwnd(), subclassForTopResize, (LPARAM)rootWindow);
+                                }
+                            }
 
                             // Set up JavaScript bridge objects
                             view->setupJavaScriptBridges();

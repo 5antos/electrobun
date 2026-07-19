@@ -1,6 +1,6 @@
 {
 	"name": "electrobun",
-	"version": "1.18.4-beta.6-wintitlebar.3",
+	"version": "1.18.4-beta.6-wintitlebar.4",
 	"description": "Build ultra fast, tiny, and cross-platform desktop apps with Typescript. (fork: assorted Windows/macOS fixes, prebuilt binaries served from this fork's own GitHub releases)",
 	"license": "MIT",
 	"exports": {
