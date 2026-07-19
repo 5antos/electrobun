@@ -4233,24 +4233,28 @@ void SetWebViewOnWebView2View(HWND containerWindow, void* webview) {
 // env var WebView2 itself reads (AARRGGBB or RRGGBB hex), parsed once.
 // Returns false when the variable isn't set, keeping the default behavior.
 static bool getConfiguredBackgroundColor(COLORREF* out) {
-    static bool parsed = false;
-    static bool valid = false;
-    static COLORREF color = 0;
-    if (!parsed) {
-        parsed = true;
-        char buf[16] = {0};
-        DWORD len = GetEnvironmentVariableA("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", buf, sizeof(buf));
-        if (len == 6 || len == 8) {
-            unsigned long argb = strtoul(buf, nullptr, 16);
-            color = RGB((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
-            valid = true;
-            ::log(std::string("[bg] WEBVIEW2_DEFAULT_BACKGROUND_COLOR=") + buf);
-        } else {
+    // Re-read every call (not cached): the bun side updates the variable at
+    // runtime when the app theme changes, so erases must follow. Env reads
+    // are microseconds — noise even during a resize storm.
+    char buf[16] = {0};
+    DWORD len = GetEnvironmentVariableA("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", buf, sizeof(buf));
+    if (len != 6 && len != 8) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
             ::log("[bg] WEBVIEW2_DEFAULT_BACKGROUND_COLOR not set - default (white) erase");
         }
+        return false;
     }
-    if (valid) *out = color;
-    return valid;
+    unsigned long argb = strtoul(buf, nullptr, 16);
+    COLORREF color = RGB((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
+    static COLORREF lastLogged = CLR_INVALID;
+    if (lastLogged != color) {
+        lastLogged = color;
+        ::log(std::string("[bg] WEBVIEW2_DEFAULT_BACKGROUND_COLOR=") + buf);
+    }
+    *out = color;
+    return true;
 }
 
 static bool eraseWithConfiguredBackground(HWND hwnd, HDC hdc) {
@@ -5293,8 +5297,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // flashed in areas exposed during a live resize.
             COLORREF bg;
             if (getConfiguredBackgroundColor(&bg)) {
+                // Cached brush, rebuilt when the configured color changes
+                // (runtime theme switches).
                 static HBRUSH staticBgBrush = NULL;
-                if (!staticBgBrush) staticBgBrush = CreateSolidBrush(bg);
+                static COLORREF staticBgBrushColor = CLR_INVALID;
+                if (!staticBgBrush || staticBgBrushColor != bg) {
+                    if (staticBgBrush) DeleteObject(staticBgBrush);
+                    staticBgBrush = CreateSolidBrush(bg);
+                    staticBgBrushColor = bg;
+                }
                 SetBkColor((HDC)wParam, bg);
                 return (LRESULT)staticBgBrush;
             }
