@@ -4269,9 +4269,12 @@ static bool eraseWithConfiguredBackground(HWND hwnd, HDC hdc) {
 // client area, which is fully covered by the container and the webview's own
 // child HWNDs — hit tests land on those and never reach the frame, so the top
 // edge (unlike the other three, which stay non-client) can't be grabbed for
-// resizing. The windows covering the strip return HTTRANSPARENT there so the
-// hit test falls through to the main window, whose WindowProc converts
-// HTCLIENT to HTTOP/HTTOPLEFT/HTTOPRIGHT.
+// resizing. The child HWNDs actually covering the strip belong to WebView2's
+// browser process, so they can't be subclassed from here; instead an
+// effectively invisible in-process overlay child (alpha 1, kept topmost among
+// the root's children) claims hits in the strip, answers HTTOP/HTTOPLEFT/
+// HTTOPRIGHT for the native resize cursors, and forwards the button-down to
+// the frame, which runs the standard modal sizing loop.
 
 static int topResizeBorderHeight() {
     // Per-monitor-v2 awareness virtualizes GetSystemMetrics to the calling
@@ -4287,17 +4290,52 @@ static bool inTopResizeStrip(HWND topLevel, LPARAM lParam) {
     return y >= wr.top && y < wr.top + topResizeBorderHeight();
 }
 
-static LRESULT CALLBACK topResizePassthroughProc(HWND hwnd, UINT msg, WPARAM wParam,
-                                                 LPARAM lParam, UINT_PTR /*id*/, DWORD_PTR refData) {
-    if (msg == WM_NCHITTEST && inTopResizeStrip((HWND)refData, lParam)) {
-        return HTTRANSPARENT;
-    }
-    return DefSubclassProc(hwnd, msg, wParam, lParam);
+static LRESULT topResizeHitCode(HWND topLevel, LPARAM lParam) {
+    RECT wr;
+    GetWindowRect(topLevel, &wr);
+    int x = GET_X_LPARAM(lParam);
+    int corner = topResizeBorderHeight();
+    if (x < wr.left + corner) return HTTOPLEFT;
+    if (x >= wr.right - corner) return HTTOPRIGHT;
+    return HTTOP;
 }
 
-static BOOL CALLBACK subclassForTopResize(HWND child, LPARAM topLevel) {
-    SetWindowSubclass(child, topResizePassthroughProc, 0xE1B0, (DWORD_PTR)topLevel);
-    return TRUE;
+static LRESULT CALLBACK topResizeOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_NCHITTEST:
+            return topResizeHitCode(GetAncestor(hwnd, GA_ROOT), lParam);
+        case WM_NCLBUTTONDOWN:
+        case WM_NCLBUTTONDBLCLK:
+            // DefWindowProc only runs the sizing loop on the frame itself.
+            return SendMessage(GetAncestor(hwnd, GA_ROOT), msg, wParam, lParam);
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+static HWND createTopResizeOverlay(HWND parent) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSA wc = {0};
+        wc.lpfnWndProc = topResizeOverlayProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = "ElectrobunTopResizeOverlay";
+        RegisterClassA(&wc);
+        registered = true;
+    }
+    RECT rc;
+    GetClientRect(parent, &rc);
+    HWND overlay = CreateWindowExA(
+        WS_EX_LAYERED | WS_EX_NOACTIVATE,
+        "ElectrobunTopResizeOverlay", "",
+        WS_CHILD | WS_VISIBLE,
+        0, 0, rc.right - rc.left, topResizeBorderHeight(),
+        parent, NULL, GetModuleHandle(NULL), NULL);
+    if (overlay) {
+        // Alpha 1: invisible in practice but still hit-testable — alpha 0
+        // would make the layered window click-through.
+        SetLayeredWindowAttributes(overlay, 0, 1, LWA_ALPHA);
+    }
+    return overlay;
 }
 
 // ContainerView class definition
@@ -4383,16 +4421,6 @@ private:
                 break;
             }
 
-            case WM_NCHITTEST: {
-                // Fall through to the frame in the top resize strip — see
-                // topResizePassthroughProc. (For default-chrome windows the
-                // strip lies in the real caption, which never hit-tests the
-                // container, so this needs no chrome-style gate.)
-                if (inTopResizeStrip(GetAncestor(m_hwnd, GA_ROOT), lParam)) {
-                    return HTTRANSPARENT;
-                }
-                break;
-            }
         }
 
         return DefWindowProc(m_hwnd, msg, wParam, lParam);
@@ -4791,6 +4819,9 @@ typedef struct {
     WindowBlurHandler blurHandler;
     WindowKeyHandler keyHandler;
     ChromeStyle chromeStyle;
+    // HiddenInset only: invisible strip claiming top-edge resize hits
+    // (see topResizeOverlayProc); NULL otherwise.
+    HWND topResizeOverlay;
 } WindowData;
 
 
@@ -5159,11 +5190,35 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     containerIt->second->ResizeAutoSizingViews(width, height);
                 }
                 
+                if (data && data->topResizeOverlay) {
+                    // Track the client width; hide while maximized (no resize
+                    // borders when zoomed, and the strip would sit over the
+                    // titlebar at the screen edge).
+                    if (IsZoomed(hwnd)) {
+                        ShowWindow(data->topResizeOverlay, SW_HIDE);
+                    } else {
+                        SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0,
+                                     LOWORD(lParam), topResizeBorderHeight(),
+                                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    }
+                }
+
                 if (data && data->resizeHandler) {
                     int width = LOWORD(lParam);
                     int height = HIWORD(lParam);
                     data->resizeHandler(data->windowId, 0, 0, width, height);
                 }
+            }
+            break;
+
+        case WM_PARENTNOTIFY:
+            // A new child (the webview container) was created after the top
+            // resize overlay — re-raise the overlay so it stays first in the
+            // sibling hit-test order. (The overlay's own creation notifies
+            // here too, but topResizeOverlay is still NULL at that point.)
+            if (LOWORD(wParam) == WM_CREATE && data && data->topResizeOverlay) {
+                SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
             break;
 
@@ -6298,19 +6353,6 @@ static std::shared_ptr<WebView2View> createWebView2View(uint32_t webviewId,
 
                             // Store container HWND for masking support
                             view->setContainerHwnd(container->GetHwnd());
-
-                            // Top-edge resize for frameless (hiddenInset)
-                            // windows: Chromium's child windows cover the top
-                            // resize strip, so subclass them to pass hit tests
-                            // there through to the frame — see
-                            // topResizePassthroughProc.
-                            {
-                                HWND rootWindow = GetAncestor(container->GetHwnd(), GA_ROOT);
-                                WindowData* rootData = (WindowData*)GetWindowLongPtr(rootWindow, GWLP_USERDATA);
-                                if (rootData && rootData->chromeStyle == ChromeStyle::HiddenInset) {
-                                    EnumChildWindows(container->GetHwnd(), subclassForTopResize, (LPARAM)rootWindow);
-                                }
-                            }
 
                             // Set up JavaScript bridge objects
                             view->setupJavaScriptBridges();
@@ -9636,6 +9678,7 @@ ELECTROBUN_EXPORT HWND createWindowWithFrameAndStyleFromWorker(
         if (!data) return NULL;
 
         data->windowId = windowId;
+        data->topResizeOverlay = NULL;
         data->closeHandler = zigCloseHandler;
         data->moveHandler = zigMoveHandler;
         data->resizeHandler = zigResizeHandler;
@@ -9736,6 +9779,10 @@ ELECTROBUN_EXPORT HWND createWindowWithFrameAndStyleFromWorker(
             if (data->chromeStyle == ChromeStyle::HiddenInset) {
                 SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+
+            if (data->chromeStyle == ChromeStyle::HiddenInset) {
+                data->topResizeOverlay = createTopResizeOverlay(hwnd);
             }
 
             // Show the window
