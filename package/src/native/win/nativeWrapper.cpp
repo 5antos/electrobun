@@ -45,6 +45,7 @@
 #include <d2d1.h>      // For Direct2D
 #include <direct.h>    // For _getcwd
 #include <tlhelp32.h>  // For process enumeration
+#include <dwmapi.h>    // For DwmSetWindowAttribute (corner rounding, caption color)
 
 // Shared cross-platform utilities
 #include "../shared/glob_match.h"
@@ -4827,6 +4828,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     WindowData* data = (WindowData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     
     switch (msg) {
+        case WM_NCACTIVATE:
+            // lParam -1 keeps DefWindowProc from repainting the classic caption
+            // bar on focus change — the caption area is stripped for these
+            // windows (WM_NCCALCSIZE below), so that repaint flashes through as
+            // a white strip above the client area.
+            if (data && data->chromeStyle == ChromeStyle::HiddenInset) {
+                return DefWindowProc(hwnd, msg, wParam, -1);
+            }
+            break;
+
         case WM_NCCALCSIZE:
             if (wParam == TRUE && data && data->chromeStyle == ChromeStyle::HiddenInset) {
                 NCCALCSIZE_PARAMS* p = (NCCALCSIZE_PARAMS*)lParam;
@@ -9484,6 +9495,25 @@ ELECTROBUN_EXPORT HWND createWindowWithFrameAndStyleFromWorker(
         if (hwnd) {
             // Store our data with the window
             SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)data);
+
+            if (data->chromeStyle == ChromeStyle::HiddenInset) {
+                // Win11: round the corners like a standard window. DWM squares
+                // them automatically while maximized/snapped, so this matches
+                // native behavior with no state tracking. Frameless windows can
+                // fail DWM's auto-rounding heuristics, hence the explicit ask.
+                // Both attributes are harmless no-ops on Win10 (E_INVALIDARG).
+                DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+                DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_ROUNDED_CORNER_PREFERENCE,
+                                      &corner, sizeof(corner));
+                // WM_NCCALCSIZE strips the caption *area*, but DWM still paints
+                // the caption background color into the frame — visible as a
+                // white strip above the client area, spanning the full window
+                // rect (wider than the visible client by the invisible resize
+                // borders). Tell DWM to paint no caption color at all.
+                COLORREF captionColor = DWMWA_COLOR_NONE;
+                DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR,
+                                      &captionColor, sizeof(captionColor));
+            }
 
             // Apply transparent window background if requested
             if (transparent) {
