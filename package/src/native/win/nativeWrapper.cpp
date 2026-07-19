@@ -4300,12 +4300,35 @@ static LRESULT topResizeHitCode(HWND topLevel, LPARAM lParam) {
     return HTTOP;
 }
 
+// Timer id for the periodic overlay re-raise (see WM_TIMER in WindowProc):
+// webview resize paths raise their HWNDs with HWND_TOP asynchronously after
+// every bun-driven resize, so a one-shot re-raise (WM_SIZE/WM_PARENTNOTIFY)
+// can always be stomped afterwards. ponytail: 500ms polling re-raise; replace
+// with raises hooked into every webview SetWindowPos site if it ever matters.
+#define TOP_RESIZE_RAISE_TIMER 0xE1B0
+
 static LRESULT CALLBACK topResizeOverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_NCHITTEST:
+        case WM_NCHITTEST: {
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                ::log("[resize] overlay hit-test active");
+            }
             return topResizeHitCode(GetAncestor(hwnd, GA_ROOT), lParam);
+        }
+        case WM_SETCURSOR:
+            // Don't rely on DefWindowProc's parent-forwarding chain for
+            // non-client sizing cursors on a child window — set them directly.
+            switch (LOWORD(lParam)) {
+                case HTTOP:      SetCursor(LoadCursor(NULL, IDC_SIZENS));   return TRUE;
+                case HTTOPLEFT:  SetCursor(LoadCursor(NULL, IDC_SIZENWSE)); return TRUE;
+                case HTTOPRIGHT: SetCursor(LoadCursor(NULL, IDC_SIZENESW)); return TRUE;
+            }
+            break;
         case WM_NCLBUTTONDOWN:
         case WM_NCLBUTTONDBLCLK:
+            ::log("[resize] overlay button-down, forwarding to frame");
             // DefWindowProc only runs the sizing loop on the frame itself.
             return SendMessage(GetAncestor(hwnd, GA_ROOT), msg, wParam, lParam);
     }
@@ -4334,6 +4357,10 @@ static HWND createTopResizeOverlay(HWND parent) {
         // Alpha 1: invisible in practice but still hit-testable — alpha 0
         // would make the layered window click-through.
         SetLayeredWindowAttributes(overlay, 0, 1, LWA_ALPHA);
+        SetTimer(parent, TOP_RESIZE_RAISE_TIMER, 500, NULL);
+        ::log("[resize] overlay created");
+    } else {
+        ::log("[resize] overlay creation FAILED");
     }
     return overlay;
 }
@@ -5194,9 +5221,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     // Track the client width; hide while maximized (no resize
                     // borders when zoomed, and the strip would sit over the
                     // titlebar at the screen edge).
+                    static bool wasHidden = false;
                     if (IsZoomed(hwnd)) {
+                        if (!wasHidden) { wasHidden = true; ::log("[resize] overlay hidden (maximized)"); }
                         ShowWindow(data->topResizeOverlay, SW_HIDE);
                     } else {
+                        if (wasHidden) { wasHidden = false; ::log("[resize] overlay shown (restored)"); }
                         SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0,
                                      LOWORD(lParam), topResizeBorderHeight(),
                                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -5271,6 +5301,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 ::log("Timer fired - forcing window refresh");
                 InvalidateRect(hwnd, NULL, TRUE);
                 UpdateWindow(hwnd);
+            } else if (wParam == TOP_RESIZE_RAISE_TIMER) {
+                // Keep the overlay first among siblings — webview resize paths
+                // raise their HWNDs with HWND_TOP asynchronously and would
+                // otherwise bury it (see TOP_RESIZE_RAISE_TIMER).
+                if (data && data->topResizeOverlay && !IsZoomed(hwnd)) {
+                    // Log (on state change) whenever something else was found
+                    // sitting above the overlay, and what it was.
+                    static bool wasBuried = false;
+                    HWND topChild = GetWindow(hwnd, GW_CHILD);
+                    if (topChild != data->topResizeOverlay) {
+                        if (!wasBuried) {
+                            wasBuried = true;
+                            char cls[64] = {0};
+                            if (topChild) GetClassNameA(topChild, cls, sizeof(cls) - 1);
+                            ::log(std::string("[resize] overlay was buried under: ") +
+                                  (topChild ? cls : "(no children?)"));
+                        }
+                    } else if (wasBuried) {
+                        wasBuried = false;
+                        ::log("[resize] overlay back on top");
+                    }
+                    SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
             }
             return 0;
             
