@@ -4227,6 +4227,40 @@ void SetWebViewOnWebView2View(HWND containerWindow, void* webview) {
     }
 }
 
+// Window/container background used for areas exposed during a live resize
+// before the webview repaints them (default is white, which flashes on dark
+// apps). Sourced from the same documented WEBVIEW2_DEFAULT_BACKGROUND_COLOR
+// env var WebView2 itself reads (AARRGGBB or RRGGBB hex), parsed once.
+// Returns false when the variable isn't set, keeping the default behavior.
+static bool getConfiguredBackgroundColor(COLORREF* out) {
+    static bool parsed = false;
+    static bool valid = false;
+    static COLORREF color = 0;
+    if (!parsed) {
+        parsed = true;
+        char buf[16] = {0};
+        DWORD len = GetEnvironmentVariableA("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", buf, sizeof(buf));
+        if (len == 6 || len == 8) {
+            unsigned long argb = strtoul(buf, nullptr, 16);
+            color = RGB((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
+            valid = true;
+        }
+    }
+    if (valid) *out = color;
+    return valid;
+}
+
+static bool eraseWithConfiguredBackground(HWND hwnd, HDC hdc) {
+    COLORREF bg;
+    if (!getConfiguredBackgroundColor(&bg)) return false;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    HBRUSH brush = CreateSolidBrush(bg);
+    FillRect(hdc, &rc, brush);
+    DeleteObject(brush);
+    return true;
+}
+
 // ContainerView class definition
 class ContainerView {
 private:
@@ -4293,8 +4327,15 @@ private:
                 EndPaint(m_hwnd, &ps);
                 return 0;
             }
+
+            case WM_ERASEBKGND: {
+                if (eraseWithConfiguredBackground(m_hwnd, (HDC)wParam)) {
+                    return 1;
+                }
+                break;
+            }
         }
-        
+
         return DefWindowProc(m_hwnd, msg, wParam, lParam);
     }
     
@@ -4887,17 +4928,51 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         else if (raw->data.mouse.lLastX != 0 || raw->data.mouse.lLastY != 0) {
                             POINT currentCursor;
                             GetCursorPos(&currentCursor);
-                            
+
                             // Calculate delta from initial cursor position when drag started
                             int deltaX = currentCursor.x - g_initialCursorPos.x;
                             int deltaY = currentCursor.y - g_initialCursorPos.y;
-                            
-                            // Calculate new window position
-                            int newX = g_initialWindowPos.x + deltaX;
-                            int newY = g_initialWindowPos.y + deltaY;
-                            
-                            SetWindowPos(g_targetWindow, NULL, newX, newY, 0, 0, 
-                                       SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+                            if (IsZoomed(g_targetWindow)) {
+                                // Native caption behavior: a maximized window is
+                                // never dragged around in the zoomed state — once
+                                // the cursor passes the drag threshold it restores,
+                                // anchored proportionally under the cursor. (Moving
+                                // it while still zoomed keeps DWM's squared corners
+                                // and misaligns WM_NCCALCSIZE's work-area clipping,
+                                // exposing the stripped caption as a white strip.)
+                                // A plain click never crosses the threshold, so it
+                                // leaves the maximized window alone.
+                                if (abs(deltaX) > GetSystemMetrics(SM_CXDRAG) ||
+                                    abs(deltaY) > GetSystemMetrics(SM_CYDRAG)) {
+                                    RECT maxRect;
+                                    GetWindowRect(g_targetWindow, &maxRect);
+                                    double ratioX = (double)(currentCursor.x - maxRect.left) /
+                                                    (double)(maxRect.right - maxRect.left);
+                                    int offsetY = currentCursor.y - maxRect.top;
+                                    ShowWindow(g_targetWindow, SW_RESTORE);
+                                    RECT restRect;
+                                    GetWindowRect(g_targetWindow, &restRect);
+                                    int width = restRect.right - restRect.left;
+                                    int height = restRect.bottom - restRect.top;
+                                    if (offsetY > height - 1) offsetY = height - 1;
+                                    int newX = currentCursor.x - (int)(ratioX * width);
+                                    int newY = currentCursor.y - offsetY;
+                                    SetWindowPos(g_targetWindow, NULL, newX, newY, 0, 0,
+                                               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                                    // Later deltas move relative to the restored frame.
+                                    g_initialCursorPos = currentCursor;
+                                    g_initialWindowPos.x = newX;
+                                    g_initialWindowPos.y = newY;
+                                }
+                            } else {
+                                // Calculate new window position
+                                int newX = g_initialWindowPos.x + deltaX;
+                                int newY = g_initialWindowPos.y + deltaY;
+
+                                SetWindowPos(g_targetWindow, NULL, newX, newY, 0, 0,
+                                           SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                            }
                         }
                     }
                 }
@@ -5034,6 +5109,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 EndPaint(hwnd, &ps);
             }
             return 0;
+
+        case WM_ERASEBKGND:
+            if (eraseWithConfiguredBackground(hwnd, (HDC)wParam)) {
+                return 1;
+            }
+            break;
             
         case WM_TIMER:
             if (wParam == 1) {
