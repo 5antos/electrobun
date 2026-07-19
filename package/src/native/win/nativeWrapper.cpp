@@ -4331,6 +4331,15 @@ static LRESULT CALLBACK topResizeOverlayProc(HWND hwnd, UINT msg, WPARAM wParam,
             ::log("[resize] overlay button-down, forwarding to frame");
             // DefWindowProc only runs the sizing loop on the frame itself.
             return SendMessage(GetAncestor(hwnd, GA_ROOT), msg, wParam, lParam);
+        case WM_ERASEBKGND:
+            // Not layered (WS_EX_LAYERED children need a Win8+ supportedOS
+            // manifest bun.exe doesn't have — creation failed outright), so
+            // stay invisible by painting the app background color: the strip
+            // overlays the titlebar area, which is the same color.
+            if (eraseWithConfiguredBackground(hwnd, (HDC)wParam)) {
+                return 1;
+            }
+            break;
     }
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -4348,19 +4357,16 @@ static HWND createTopResizeOverlay(HWND parent) {
     RECT rc;
     GetClientRect(parent, &rc);
     HWND overlay = CreateWindowExA(
-        WS_EX_LAYERED | WS_EX_NOACTIVATE,
+        WS_EX_NOACTIVATE,
         "ElectrobunTopResizeOverlay", "",
         WS_CHILD | WS_VISIBLE,
         0, 0, rc.right - rc.left, topResizeBorderHeight(),
         parent, NULL, GetModuleHandle(NULL), NULL);
     if (overlay) {
-        // Alpha 1: invisible in practice but still hit-testable — alpha 0
-        // would make the layered window click-through.
-        SetLayeredWindowAttributes(overlay, 0, 1, LWA_ALPHA);
         SetTimer(parent, TOP_RESIZE_RAISE_TIMER, 500, NULL);
         ::log("[resize] overlay created");
     } else {
-        ::log("[resize] overlay creation FAILED");
+        ::log("[resize] overlay creation FAILED, error=" + std::to_string(GetLastError()));
     }
     return overlay;
 }
