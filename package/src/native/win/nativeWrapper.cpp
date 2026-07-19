@@ -4244,6 +4244,9 @@ static bool getConfiguredBackgroundColor(COLORREF* out) {
             unsigned long argb = strtoul(buf, nullptr, 16);
             color = RGB((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF);
             valid = true;
+            ::log(std::string("[bg] WEBVIEW2_DEFAULT_BACKGROUND_COLOR=") + buf);
+        } else {
+            ::log("[bg] WEBVIEW2_DEFAULT_BACKGROUND_COLOR not set - default (white) erase");
         }
     }
     if (valid) *out = color;
@@ -4279,6 +4282,15 @@ private:
             CREATESTRUCT* cs = (CREATESTRUCT*)lParam;
             container = (ContainerView*)cs->lpCreateParams;
             SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)container);
+            // m_hwnd is normally assigned only after CreateWindowExA returns,
+            // but HandleMessage passes it to DefWindowProc — during creation it
+            // was still uninitialized, so WM_NCCREATE went through a garbage
+            // HWND, DefWindowProc returned FALSE, and CreateWindowExA always
+            // failed ("Custom class failed, falling back to STATIC class").
+            // Assign it here so the custom container class actually works.
+            if (container) {
+                container->m_hwnd = hwnd;
+            }
         } else {
             container = (ContainerView*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
         }
@@ -4945,6 +4957,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                                 // leaves the maximized window alone.
                                 if (abs(deltaX) > GetSystemMetrics(SM_CXDRAG) ||
                                     abs(deltaY) > GetSystemMetrics(SM_CYDRAG)) {
+                                    ::log("[drag] threshold crossed on zoomed window - restoring");
                                     RECT maxRect;
                                     GetWindowRect(g_targetWindow, &maxRect);
                                     double ratioX = (double)(currentCursor.x - maxRect.left) /
@@ -5115,6 +5128,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 1;
             }
             break;
+
+        case WM_CTLCOLORSTATIC: {
+            // The webview container can be a STATIC control (fallback when the
+            // custom container class fails to register/create) — STATIC erases
+            // by asking its parent for a brush here, defaulting to white, which
+            // flashed in areas exposed during a live resize.
+            COLORREF bg;
+            if (getConfiguredBackgroundColor(&bg)) {
+                static HBRUSH staticBgBrush = NULL;
+                if (!staticBgBrush) staticBgBrush = CreateSolidBrush(bg);
+                SetBkColor((HDC)wParam, bg);
+                return (LRESULT)staticBgBrush;
+            }
+            break;
+        }
             
         case WM_TIMER:
             if (wParam == 1) {
@@ -10079,6 +10107,8 @@ ELECTROBUN_EXPORT void startWindowMove(NSWindow *window) {
     // Set up window dragging state
     g_targetWindow = hwnd;
     g_isMovingWindow = TRUE;
+
+    ::log(std::string("[drag] startWindowMove, zoomed=") + (IsZoomed(hwnd) ? "1" : "0"));
     
     // Get initial cursor and window positions
     GetCursorPos(&g_initialCursorPos);
