@@ -4286,6 +4286,29 @@ static int topResizeBorderHeight() {
     return GetSystemMetrics(SM_CYSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
 }
 
+// Physical-pixel width, measured from the right window edge, that the top
+// resize overlay must NOT cover — the app's custom titlebar buttons live
+// there, and covering them both paints over their top edge and steals their
+// clicks. Re-read every use (like the background color) so a renderer update
+// takes effect without caching. Read from the env var the app sets via
+// setTopResizeRightInset (see the rooms bun side); 0 (unset) = full width.
+static int topResizeRightInset() {
+    char buf[16] = {0};
+    DWORD len = GetEnvironmentVariableA("ELECTROBUN_TOP_RESIZE_RIGHT_INSET", buf, sizeof(buf));
+    if (len == 0 || len >= sizeof(buf)) return 0;
+    int v = atoi(buf);
+    return v > 0 ? v : 0;
+}
+
+// Overlay width for a parent client area: full width minus the reserved
+// titlebar-button strip on the right.
+static int topResizeOverlayWidth(HWND parent) {
+    RECT rc;
+    GetClientRect(parent, &rc);
+    int w = (rc.right - rc.left) - topResizeRightInset();
+    return w > 0 ? w : 0;
+}
+
 static bool inTopResizeStrip(HWND topLevel, LPARAM lParam) {
     if (IsZoomed(topLevel)) return false; // maximized windows have no resize borders
     RECT wr;
@@ -4358,13 +4381,11 @@ static HWND createTopResizeOverlay(HWND parent) {
         RegisterClassA(&wc);
         registered = true;
     }
-    RECT rc;
-    GetClientRect(parent, &rc);
     HWND overlay = CreateWindowExA(
         WS_EX_NOACTIVATE,
         "ElectrobunTopResizeOverlay", "",
         WS_CHILD | WS_VISIBLE,
-        0, 0, rc.right - rc.left, topResizeBorderHeight(),
+        0, 0, topResizeOverlayWidth(parent), topResizeBorderHeight(),
         parent, NULL, GetModuleHandle(NULL), NULL);
     if (overlay) {
         SetTimer(parent, TOP_RESIZE_RAISE_TIMER, 500, NULL);
@@ -5238,7 +5259,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     } else {
                         if (wasHidden) { wasHidden = false; ::log("[resize] overlay shown (restored)"); }
                         SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0,
-                                     LOWORD(lParam), topResizeBorderHeight(),
+                                     topResizeOverlayWidth(hwnd), topResizeBorderHeight(),
                                      SWP_NOACTIVATE | SWP_SHOWWINDOW);
                     }
                 }
@@ -5339,8 +5360,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                         wasBuried = false;
                         ::log("[resize] overlay back on top");
                     }
-                    SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    // Re-raise and re-apply width: the renderer reports the
+                    // titlebar-button inset shortly after load (and could change
+                    // it), and there may be no resize event to re-run WM_SIZE.
+                    SetWindowPos(data->topResizeOverlay, HWND_TOP, 0, 0,
+                                 topResizeOverlayWidth(hwnd), topResizeBorderHeight(),
+                                 SWP_NOACTIVATE);
                 }
             }
             return 0;
